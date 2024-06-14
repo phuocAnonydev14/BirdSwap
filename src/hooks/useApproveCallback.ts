@@ -104,5 +104,7 @@ export function useApproveCallbackFromTrade(trade?: Trade, allowedSlippage = 0) 
     [trade, allowedSlippage]
   );
 
+  // console.log('amount to approve', amountToApprove, trade, allowedSlippage);
+
   return useApproveCallback(amountToApprove, ROUTER_ADDRESS);
 }

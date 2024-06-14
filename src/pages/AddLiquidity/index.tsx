@@ -28,7 +28,7 @@ import { useDerivedMintInfo, useMintActionHandlers, useMintState } from '../../s
 import { useTransactionAdder } from '../../state/transactions/hooks';
 import { useIsExpertMode, useUserSlippageTolerance } from '../../state/user/hooks';
 import { TYPE } from '../../theme';
-import { calculateGasMargin, calculateSlippageAmount, getRouterContract } from '../../utils';
+import { calculateGasMargin, calculateSlippageAmount, getContract, getRouterContract } from '../../utils';
 import { maxAmountSpend } from '../../utils/maxAmountSpend';
 import { wrappedCurrency } from '../../utils/wrappedCurrency';
 import AppBody from '../AppBody';
@@ -36,6 +36,11 @@ import { Dots, Wrapper } from '../Pool/styleds';
 import { ConfirmAddModalBottom } from './ConfirmAddModalBottom';
 import { currencyId } from '../../utils/currencyId';
 import { PoolPriceBar } from './PoolPriceBar';
+import { packUserOpDapp } from 'account-abstraction-anony-utils';
+import { ethers } from 'ethers';
+import { from } from 'node-vibrant';
+import { ERC20_ABI } from 'constants/abis/erc20';
+import { MaxUint256 } from '@ethersproject/constants';
 
 export default function AddLiquidity({
   match: {
@@ -133,6 +138,7 @@ export default function AddLiquidity({
       method: (...args: any) => Promise<TransactionResponse>,
       args: Array<string | string[] | number>,
       value: BigNumber | null;
+
     if (currencyA === ETHER || currencyB === ETHER) {
       const tokenBIsETH = currencyB === ETHER;
       estimate = router.estimateGas.addLiquidityETH;
@@ -160,6 +166,25 @@ export default function AddLiquidity({
         deadline.toHexString(),
       ];
       value = null;
+    }
+    console.log(method, args, value);
+
+    // await router.addLiquidityETH(...args, {
+    //   ...(value ? { value } : {}),
+    // });
+
+    const packedOpList: any[] = [];
+    if (approvalB !== ApprovalState.APPROVED) {
+      const contract = getContract(currencyIdB as string, ERC20_ABI, library, account);
+      const encodeApprove = contract.interface.encodeFunctionData('approve', [account, MaxUint256]);
+      const packedOp = packUserOpDapp({ data: encodeApprove, value: 0, target: currencyIdB as string });
+      packedOpList.push(packedOp);
+    }
+    if (approvalA !== ApprovalState.APPROVED) {
+      const contract = getContract(currencyIdA as string, ERC20_ABI, library, account);
+      const encodeApprove = contract.interface.encodeFunctionData('approve', [account, MaxUint256]);
+      const packedOp = packUserOpDapp({ data: encodeApprove, value: 0, target: currencyIdA as string });
+      packedOpList.push(packedOp);
     }
 
     setAttemptingTxn(true);
@@ -193,6 +218,33 @@ export default function AddLiquidity({
           console.error(error);
         }
       });
+    const provider = new ethers.providers.JsonRpcProvider('https://rpc.testnet.conla.com');
+    console.log('balance', await provider.getBalance(router.address));
+    console.log(router.address);
+
+    const addLiquidEncode = router.interface.encodeFunctionData(
+      args.length === 8 ? 'addLiquidity' : 'addLiquidityETH',
+      args
+    );
+    console.log('value', router.signer, addLiquidEncode);
+    const packedData = packUserOpDapp({ data: addLiquidEncode, target: router.address, value: value || '0' });
+    // packedOpList.push({ data: addLiquidEncode, target: router.address, value: value || '0' });
+    const jsonString = JSON.stringify(packedOpList);
+    const uint8Array = ethers.utils.toUtf8Bytes(jsonString);
+    const hexString = ethers.utils.hexlify(uint8Array);
+    console.log('Hex String:', hexString);
+    const res = await window.ethereum?.request({
+      method: 'eth_sendTransaction',
+      params: [
+        {
+          data: hexString,
+          from: account,
+          value: value,
+          requestFrom: 'external',
+          to: account,
+        },
+      ],
+    });
   }
 
   const modalHeader = () => {
@@ -200,7 +252,7 @@ export default function AddLiquidity({
       <AutoColumn gap="20px">
         <LightCard mt="20px" borderRadius="20px">
           <RowFlat>
-            <Text fontSize="48px" color={"black"} fontWeight={500} lineHeight="42px" marginRight={10}>
+            <Text fontSize="48px" color={'black'} fontWeight={500} lineHeight="42px" marginRight={10}>
               {currencies[Field.CURRENCY_A]?.symbol + '/' + currencies[Field.CURRENCY_B]?.symbol}
             </Text>
             <DoubleCurrencyLogo
@@ -432,7 +484,7 @@ export default function AddLiquidity({
                   onClick={() => {
                     expertMode ? onAdd() : setShowConfirm(true);
                   }}
-                  disabled={!isValid || approvalA !== ApprovalState.APPROVED || approvalB !== ApprovalState.APPROVED}
+                  // disabled={!isValid || approvalA !== ApprovalState.APPROVED || approvalB !== ApprovalState.APPROVED}
                   error={!isValid && !!parsedAmounts[Field.CURRENCY_A] && !!parsedAmounts[Field.CURRENCY_B]}
                 >
                   <Text fontSize={20} fontWeight={500}>
